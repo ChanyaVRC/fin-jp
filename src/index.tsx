@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { renderer } from "./renderer";
 
-const app = new Hono<{ Bindings: { cf: { timezone?: string } } }>();
+const app = new Hono();
 app.use(renderer);
 
 function calculateDayNightFactor(hour: number): number {
@@ -142,6 +142,31 @@ function setBackgroundByTimeAndWeather(
   return { rainColor, gradient };
 }
 
+function getWeatherCondition(
+  weathercode: number
+): "clear" | "cloudy" | "other" {
+  if (weathercode === 0) {
+    return "clear";
+  } else if ([1, 2, 3].includes(weathercode)) {
+    return "cloudy";
+  } else {
+    return "other";
+  }
+}
+function calculateRainMetrics(now: Date): number {
+  const timeInSeconds = now.getTime() / 1000;
+  const slowTime = timeInSeconds / 1000;
+  const t =
+    (Math.sin(slowTime) +
+     Math.cos(1.3 * slowTime) +
+     Math.sin(2.1 * slowTime)) /
+    3;
+  const rainCount = Math.round(
+    50 + 450 * ((t + Math.abs(t)) / 2) + 45 * ((t - Math.abs(t)) / 2)
+  );
+  return rainCount;
+}
+
 interface WeatherResponse {
   current_weather: {
     weathercode: number;
@@ -164,27 +189,14 @@ app.get("/", async (c) => {
     console.error("天気情報の取得エラー:", error);
   }
 
-  let condition: "clear" | "cloudy" | "other";
-  if (weathercode === 0) {
-    condition = "clear";
-  } else if ([1, 2, 3].includes(weathercode)) {
-    condition = "cloudy";
-  } else {
-    condition = "other";
-  }
-  const timezone = c.env.cf?.timezone || "Asia/Tokyo";
+  let condition = getWeatherCondition(weathercode);
+  const timezone = "Asia/Tokyo";
   const now = new Date(
     new Date().toLocaleString("ja-JP", { timeZone: timezone })
   );
   ({ gradient, rainColor } = setBackgroundByTimeAndWeather(now, condition));
-  const t =
-    (Math.sin(Date.now() / 1000) +
-      Math.cos((1.3 * Date.now()) / 1000) +
-      Math.sin((2.1 * Date.now()) / 1000)) /
-    3;
-  const rainCount = Math.round(
-    50 + 450 * ((t + Math.abs(t)) / 2) + 45 * ((t - Math.abs(t)) / 2)
-  );
+
+  const rainCount = calculateRainMetrics(now);
   return c.render(
     <div
       id="weather-bg"
