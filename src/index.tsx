@@ -4,12 +4,6 @@ import { renderer } from "./renderer";
 const app = new Hono();
 app.use(renderer);
 
-function calculateDayNightFactor(hour: number): number {
-  if (hour < 6 || hour >= 22) return 0;
-  if (hour < 12) return (hour - 6) / 6;
-  if (hour < 18) return 1;
-  return 1 - (hour - 18) / 4;
-}
 
 interface RGB {
   r: number;
@@ -129,7 +123,7 @@ function setBackgroundByTimeAndWeather(
   condition: "clear" | "cloudy" | "other"
 ): { rainColor: string; gradient: string } {
   const season = SEASONS[now.getMonth()];
-  const t = calculateDayNightFactor(now.getHours() + now.getMinutes() / 60);
+  const t = calculateDayNightFactor(now);
   const { day, night } = COLOR_MAP[condition][season];
 
   const startColor = blendColors(night.start, day.start, t);
@@ -165,6 +159,47 @@ function calculateRainMetrics(now: Date): number {
     50 + 450 * ((t + Math.abs(t)) / 2) + 45 * ((t - Math.abs(t)) / 2)
   );
   return rainCount;
+}
+
+/**
+ * Calculates the sky brightness factor (0 to 1) based on the given date.
+ * Seasonal changes are taken into account by interpolating the sunrise and sunset times throughout the year.
+ *
+ * Model:
+ *  - Sunrise is centered around 6.5 hours with a ±1.0 hour variation (e.g., ~5.5 in summer, ~7.5 in winter).
+ *  - Sunset is centered around 18.0 hours with a ±1.5 hour variation (e.g., ~19.5 in summer, ~16.5 in winter).
+ *  - The brightness follows a sine curve: 0 at sunrise, 1 at noon, and 0 at sunset.
+ *
+ * @param date - The Date object for which to calculate the brightness.
+ * @returns The brightness factor (0 for dark, 1 for brightest).
+ */
+function calculateDayNightFactor(date: Date): number {
+  // Calculate the number of days since the start of the year (January 1 as day 0)
+  const startOfYear = new Date(date.getFullYear(), 0, 1);
+  const dayOfYear = Math.floor(
+    (date.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24)
+  );
+
+  // Convert current time to a decimal representation (e.g., 13:30 -> 13.5)
+  const currentTime =
+    date.getHours() + date.getMinutes() / 60 + date.getSeconds() / 3600;
+
+  // Calculate the reference angle based on the day of the year (using June 21, the 172nd day, as the basis)
+  const radians = 2 * Math.PI * ((dayOfYear - 172) / 365);
+
+  // Interpolate the sunrise and sunset times dynamically over the year
+  const sunrise = 6.5 - 1.0 * Math.cos(radians); // Approx. 5.5 in summer, 7.5 in winter
+  const sunset = 18.0 + 1.5 * Math.cos(radians); // Approx. 19.5 in summer, 16.5 in winter
+
+  // If before sunrise or after sunset, return brightness 0
+  if (currentTime < sunrise || currentTime > sunset) {
+    return 0;
+  }
+
+  // Calculate the progression of the day (from 0 at sunrise to 1 at sunset)
+  const dayProgress = (currentTime - sunrise) / (sunset - sunrise);
+  // Use a sine curve for smooth brightness transition (0 at sunrise, peak at noon, 0 at sunset)
+  return Math.sin(dayProgress * Math.PI);
 }
 
 interface WeatherResponse {
