@@ -1,9 +1,8 @@
 import { Hono } from "hono";
 import { renderer } from "./renderer";
 
-const app = new Hono();
-app.use(renderer);
-
+// Define a type alias for weather conditions
+type WeatherCondition = "clear" | "cloudy" | "other";
 
 interface RGB {
   r: number;
@@ -11,6 +10,18 @@ interface RGB {
   b: number;
 }
 
+interface WeatherResponse {
+  current_weather: {
+    weathercode: number;
+  };
+}
+
+/**
+ * Converts a hexadecimal color string to an RGB object.
+ *
+ * @param hex - The hex color string (with or without a leading '#').
+ * @returns An object containing the red, green, and blue components.
+ */
 const hexToRgb = (hex: string): RGB => {
   const cleanHex = hex.startsWith("#") ? hex.slice(1) : hex;
   return {
@@ -20,9 +31,24 @@ const hexToRgb = (hex: string): RGB => {
   };
 };
 
+/**
+ * Converts an RGB object into a hexadecimal color string.
+ *
+ * @param param0 - An object with red, green, and blue values.
+ * @returns A hex color string starting with '#'.
+ */
 const rgbToHex = ({ r, g, b }: RGB): string =>
   "#" + [r, g, b].map((n) => n.toString(16).padStart(2, "0")).join("");
 
+/**
+ * Blends two hexadecimal color strings according to the provided factor.
+ * A factor of 0 returns the first color, while a factor of 1 returns the second color.
+ *
+ * @param color1 - The first hex color string.
+ * @param color2 - The second hex color string.
+ * @param factor - The interpolation factor between 0 and 1.
+ * @returns The blended hex color string.
+ */
 const blendColors = (
   color1: string,
   color2: string,
@@ -53,7 +79,7 @@ const SEASONS = [
 ];
 
 const COLOR_MAP: Record<
-  string,
+  WeatherCondition,
   Record<
     string,
     {
@@ -118,9 +144,17 @@ const COLOR_MAP: Record<
   },
 };
 
+/**
+ * Determines the background gradient and rain color based on the current time and weather condition.
+ * It uses the seasonal color mapping and day-night blending to compute the colors.
+ *
+ * @param now - The current Date object.
+ * @param condition - The weather condition.
+ * @returns An object containing the raindrop color and the background gradient.
+ */
 function setBackgroundByTimeAndWeather(
   now: Date,
-  condition: "clear" | "cloudy" | "other"
+  condition: WeatherCondition
 ): { rainColor: string; gradient: string } {
   const season = SEASONS[now.getMonth()];
   const t = calculateDayNightFactor(now);
@@ -136,9 +170,13 @@ function setBackgroundByTimeAndWeather(
   return { rainColor, gradient };
 }
 
-function getWeatherCondition(
-  weathercode: number
-): "clear" | "cloudy" | "other" {
+/**
+ * Returns the weather condition based on the provided weather code.
+ *
+ * @param weathercode - The numerical weather code.
+ * @returns The weather condition.
+ */
+function getWeatherCondition(weathercode: number): WeatherCondition {
   if (weathercode === 0) {
     return "clear";
   } else if ([1, 2, 3].includes(weathercode)) {
@@ -147,13 +185,19 @@ function getWeatherCondition(
     return "other";
   }
 }
+
+/**
+ * Calculates the number of raindrops based on the current time.
+ * Uses a combination of sine and cosine functions to simulate varying rain intensity.
+ *
+ * @param now - The current Date object.
+ * @returns The calculated number of raindrops.
+ */
 function calculateRainMetrics(now: Date): number {
   const timeInSeconds = now.getTime() / 1000;
   const slowTime = timeInSeconds / 1000;
   const t =
-    (Math.sin(slowTime) +
-     Math.cos(1.3 * slowTime) +
-     Math.sin(2.1 * slowTime)) /
+    (Math.sin(slowTime) + Math.cos(1.3 * slowTime) + Math.sin(2.1 * slowTime)) /
     3;
   const rainCount = Math.round(
     50 + 450 * ((t + Math.abs(t)) / 2) + 45 * ((t - Math.abs(t)) / 2)
@@ -208,12 +252,16 @@ interface WeatherResponse {
   };
 }
 
+const app = new Hono();
+app.use(renderer);
+
 app.get("/", async (c) => {
   let gradient = "linear-gradient(to bottom, #000428, #004e92)";
   let rainColor = "#90caf9";
   let weathercode: number = 0;
 
   try {
+    // Fetch current weather data from the Open-Meteo API
     const response = await fetch(
       "https://api.open-meteo.com/v1/forecast?latitude=35.6895&longitude=139.6917&current_weather=true"
     );
@@ -221,10 +269,10 @@ app.get("/", async (c) => {
     const data = (await response.json()) as WeatherResponse;
     weathercode = data.current_weather.weathercode;
   } catch (error) {
-    console.error("天気情報の取得エラー:", error);
+    console.error("Error fetching weather data:", error);
   }
 
-  let condition = getWeatherCondition(weathercode);
+  const condition = getWeatherCondition(weathercode);
   const timezone = "Asia/Tokyo";
   const now = new Date(
     new Date().toLocaleString("ja-JP", { timeZone: timezone })
